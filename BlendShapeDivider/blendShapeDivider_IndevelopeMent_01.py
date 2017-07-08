@@ -1,11 +1,14 @@
 #BlendShape Divider
 """
+Original reference: BlendTapper 5.0
 Developed by Jingtian Li
 
 Ver 1.0
 """
-import maya.cmds as mc
 
+#Libraries
+import maya.cmds as mc
+import maya.OpenMaya as om
 
 
 
@@ -35,13 +38,20 @@ SpecifyBaseShapeCB = mc.checkBox(l = "Specify BaseShape", v = True, onc = "Speci
 BasicShapeTextField = mc.textField("BasicShapeTextFieldID", w = 250, ed = False, vis = True)
 assingBaseShapeBtn = mc.button("assingBaseShapeBtnID", l = "<<<", vis = True, c = "assingBaseShapeBtnCmd()")
 mc.setParent(BlendShapeWindowMasterLayout)
-mc.button(l = "Create", c = "CreateBtnCmd()")
-mc.button(l = "Cancel", c = "CancelBtnCmd()")
+ApplyButtonSectionLayout = mc.rowColumnLayout(nc = 3)
+mc.button(l = "Create Plane", w = 135, c = "CreatePlaneBtnCmd()")
+mc.button(l = "Make blendshapes",w = 135, c = "MakeBlspBtnCmd()")
+mc.button(l = "Cancel", w = 135,c = "CancelBtnCmd()")
 mc.showWindow(BlendShapeDividerWindowID)
 
 ########################################################################
 ####                            Methods                             ####
 ########################################################################
+
+#print the x, y, z value of the om.MVector passed in
+def printMVector(VectorToPrint):
+    print VectorToPrint.x, VectorToPrint.y, VectorToPrint.z
+
 def printInfo():
     #Gather Info
     NumberOfDivision = mc.intSliderGrp(divisitonintField, q = True, v =True)
@@ -88,8 +98,9 @@ def CancelBtnCmd():
     if (mc.window(BlendShapeDividerWindowID, q = True, exists = True)):
         mc.deleteUI(BlendShapeDividerWindowID)
     
-
-def CreateBtnCmd():
+def MakeBlspBtnCmd():
+    print "Making"
+def CreatePlaneBtnCmd():
     #create paramaters
     #get base shape
     #get number of divisions
@@ -121,8 +132,8 @@ def CreateBtnCmd():
         else:
             TargetShape = item
     
-    #print "base shape is: " + BaseShape
-    #print "Target Shape is: " + TargetShape
+    print "base shape is: " + BaseShape
+    print "Target Shape is: " + TargetShape
     if specifyBaseShape:
         BaseShape = BaseShapeFiledText
     if BaseShape == "":
@@ -131,14 +142,28 @@ def CreateBtnCmd():
     #gether per vertex translation and object translation
     baseVertexLocations= GetVertexLocations(BaseShape)
     targetVertexLocations = GetVertexLocations(TargetShape)
-    baseTranlation = getTranslateNodePostion(BaseShape)
-    targetTranlation = getTranslateNodePostion(TargetShape)
+    baseTranslation = getTranslateNodePostion(BaseShape)
+    targetTranslation = getTranslateNodePostion(TargetShape)
+    
+    #printMVector(baseTranslation)
+    
+    #get the bounding box of the offsetted vertex
+    boundingBoxInfo = GetBoundingBox(baseVertexLocations, targetVertexLocations, baseTranslation, targetTranslation)
+    boundingBox = boundingBoxInfo[0]
+    bIsBoundingBoxValid = boundingBoxInfo[1]
+    #print boundingBox, bIsBoundingBoxValid
+    
+    if(not bIsBoundingBoxValid):
+        mc.error("There is no different between seleted shape and base shape")
+    
     
 #get the world space location of the translatation node of the given shape        
 def getTranslateNodePostion(shape):
     translateNode = mc.listRelatives(shape,p = True)[0]
+    #MVector is a vector 3D
     location = mc.xform(translateNode, q = True, ws = True, t= True)
-    return location
+    locationVect = om.MVector(location[0], location[1], location[2])
+    return locationVect
     
 #return the world space locations of all the vertex on the shape as a list     
 def GetVertexLocations(shape):
@@ -149,10 +174,8 @@ def GetVertexLocations(shape):
     
     #determine if it is a Nurbs or Mesh
     if mc.objectType(shape,i = "nurbsSurface"):
-        print "nurbs"
         vertexAmount = GetNurbsVertexCount(translateNode)
     elif mc.objectType(shape,i = "mesh"):
-        print "Mesh"
         vertexAmount = mc.polyEvaluate(shape, v = True)
     else:
         mc.error("Unsupported Geo, use polygon or nurbs")
@@ -167,7 +190,8 @@ def GetVertexLocations(shape):
         else:
             vertexName = shape + ".cv[" + str(i) + "]"
         vertexLocation = mc.xform(vertexName, q = True, ws = True, t = True)
-        vertexLocationList.append(vertexLocation) 
+        vertexLocationVect = om.MVector(vertexLocation[0], vertexLocation[1], vertexLocation[2])
+        vertexLocationList.append(vertexLocationVect) 
     return vertexLocationList
     
 
@@ -178,19 +202,77 @@ def GetNurbsVertexCount(surfaceName):
     geoVertCont = mc.polyEvaluate(TempGeo, v = True)
     mc.delete(TempGeo)
     return geoVertCont
+    
+#get the furest x, y, z, reach of all the area that base and target are different in base mesh space. also returns true if there is any different
+def GetBoundingBox(baseVertPositionList, targetVertPositionList, baseTranslation, targetTranslation):
+    boundingBox = []
+    xMin = 999999
+    xMax = -999999
+    yMin = 999999
+    yMax = -999999
+    zMin = 999999
+    zMax = -999999
+    
+    bHasAnyDifferent = False
+    
+    offset = targetTranslation - baseTranslation
+    for i in range(0, len(baseVertPositionList)):
+        #move target vert into the same as base vert
+        adjustedVert = targetVertPositionList[i] - offset
+        #find out if target vertex is different to base vertex
+        difftolerance = 0.001
+        baseVertex = baseVertPositionList[i]
+        
+        b_XIsDifferent = (adjustedVert.x < (baseVertex.x - difftolerance) or adjustedVert.x > (baseVertex.x + difftolerance))
+        b_YIsDifferent = (adjustedVert.y < (baseVertex.y - difftolerance) or adjustedVert.y > (baseVertex.y + difftolerance))
+        b_ZIsDifferent = (adjustedVert.z < (baseVertex.z - difftolerance) or adjustedVert.z > (baseVertex.z + difftolerance))
+        
+        bIsVertexDifferent = b_XIsDifferent or b_YIsDifferent or b_ZIsDifferent
+        
+        if bIsVertexDifferent:
+            bHasAnyDifferent = True
+            if adjustedVert.x < xMin:
+                xMin = adjustedVert.x
+            if adjustedVert.x > xMax:
+                xMax = adjustedVert.x
+            if adjustedVert.y < yMin:
+                yMin = adjustedVert.y
+            if adjustedVert.y > yMax:
+                yMax = adjustedVert.y
+            if adjustedVert.z < zMin:
+                zMin = adjustedVert.z
+            if adjustedVert.z > zMax:
+                zMax = adjustedVert.z
+    
+    boundingBox.append(xMin)
+    boundingBox.append(xMax)
+    boundingBox.append(yMin)
+    boundingBox.append(yMax)
+    boundingBox.append(zMin)
+    boundingBox.append(zMax)
+    
+    return boundingBox, bHasAnyDifferent
 
+#
+def MakeDivistionPlan(boundingBox, basePosition, targetPosition, targetShape, baseShape, numOfDivision):
+    Planes = []
     
+    #get the offset:
+    offset = targetPosition - basePosition
+    #figure out dimensions:
+    #x lenght of bounding box
+    width = boundingBox[1] - boundingBox[0]
+    #y length of bounding box
+    height = boundingBox[3] - boundingBox[2]
+    #z lenght of bounding box
+    depth = boundingBox[5] - boundingBox[4]
     
+    planGrpYPosition = ((boundingBox[2] + boundingBox[3])/2.0) + offset.y
+    planGrpZPosition = ((boundingBox[4] + boundingBox[5])/2.0) + offset.z
     
-    
-    
-    
-    
-    
-    
-    
-    
-    
+    planGrpName = targetShape + "_DivistionPlanGrp"
+    #create a empty grp
+    mc.group(n = planGrpName, em = True)
     
     
     
