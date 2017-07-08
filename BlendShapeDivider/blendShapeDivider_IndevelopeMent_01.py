@@ -156,6 +156,8 @@ def CreatePlaneBtnCmd():
     if(not bIsBoundingBoxValid):
         mc.error("There is no different between seleted shape and base shape")
     
+    #create divistion Planes:
+    MakeDivistionPlan(boundingBox, baseTranslation, targetTranslation, TargetShape, BaseShape, NumberOfDivision)
     
 #get the world space location of the translatation node of the given shape        
 def getTranslateNodePostion(shape):
@@ -253,7 +255,7 @@ def GetBoundingBox(baseVertPositionList, targetVertPositionList, baseTranslation
     
     return boundingBox, bHasAnyDifferent
 
-#
+#create divistion planes and return their name as a list
 def MakeDivistionPlan(boundingBox, basePosition, targetPosition, targetShape, baseShape, numOfDivision):
     Planes = []
     
@@ -267,25 +269,45 @@ def MakeDivistionPlan(boundingBox, basePosition, targetPosition, targetShape, ba
     #z lenght of bounding box
     depth = boundingBox[5] - boundingBox[4]
     
-    planGrpYPosition = ((boundingBox[2] + boundingBox[3])/2.0) + offset.y
-    planGrpZPosition = ((boundingBox[4] + boundingBox[5])/2.0) + offset.z
+    #find the posiiton bounding box on target mesh
+    TargetBoundingBoxYPovit = ((boundingBox[2] + boundingBox[3])/2.0) + offset.y
+    TargetBoundingBoxZPovit = ((boundingBox[4] + boundingBox[5])/2.0) + offset.z
+    TargetBoundingBoxXPovit = ((boundingBox[0] + boundingBox[1])/2.0) + offset.x
     
-    planGrpName = targetShape + "_DivistionPlanGrp"
-    #create a empty grp
+    planGrpName = targetShape + "_DivistionPlaneGrp"
+    #create an empty grp
     mc.group(n = planGrpName, em = True)
     
+    #start making planes
+    for i in range(0, numOfDivision):  
+        #create the plane
+        CreatePlaneResult = mc.polyPlane(n = targetShape + "_DivisionPlane_" + str(i + 1), ax = (1,0,0), w = depth*1.1, h = height * 1.1, sx = 1, sy = 1, ch = False)
+        PlaneName = CreatePlaneResult[0]
+        #Find the Translate.X of the plane: 
+        PlaneXPosition = (width/(numOfDivision - 1.0))*i + TargetBoundingBoxXPovit - 0.5 * width
+        #move the planeto the right place
+        mc.move(PlaneXPosition, TargetBoundingBoxYPovit, TargetBoundingBoxZPovit, PlaneName)        
+        
+        #lock and hide unwanted attributes    
+        mc.setAttr(PlaneName + ".r",l = True, k = False)
+        mc.setAttr(PlaneName + ".s",l = True, k = False)  
+        mc.setAttr(PlaneName + ".v",l = True, k = False) 
+        mc.setAttr(PlaneName + ".tz",l = True, k = False) 
+        mc.setAttr(PlaneName + ".ty",l = True, k = False) 
     
+    #add baseShapeAttribute for futrue reference on the first plane:
+        if i == 0:
+            mc.addAttr(PlaneName, ln = "baseShape", dt = "string")
+            mc.setAttr(PlaneName + ".baseShape", baseShape, type = "string")
+            
+        Planes.append(PlaneName)
+        mc.parent(PlaneName, planGrpName)
     
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
+    #Center poivots
+    mc.xform(planGrpName,cp = True)
+    #parent to targetShape
+    mc.parent(planGrpName, targetShape)
+    return Planes
     
     
     
