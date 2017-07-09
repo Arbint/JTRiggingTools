@@ -9,7 +9,7 @@ Ver 1.0
 #Libraries
 import maya.cmds as mc
 import maya.OpenMaya as om
-
+import maya.mel as mel
 
 
 ########################################################################
@@ -47,6 +47,22 @@ mc.showWindow(BlendShapeDividerWindowID)
 ########################################################################
 ####                            Methods                             ####
 ########################################################################
+
+#simple clamp fucntion:
+def clamp(min, max, value):
+    if value < min:
+        value = min
+    elif value > max:
+        value = max
+    return value
+
+#smooth step using maya.mel.eval
+def smoothStep(min, max, value):
+    minString = str(min)
+    maxString = str(max)
+    valueString = str(value)    
+    percentage = mel.eval("smoothstep(" + minString + "," + maxString + "," + valueString + ")" )
+    return percentage
 
 #print the x, y, z value of the om.MVector passed in
 def printMVector(VectorToPrint):
@@ -99,7 +115,154 @@ def CancelBtnCmd():
         mc.deleteUI(BlendShapeDividerWindowID)
     
 def MakeBlspBtnCmd():
-    print "Making"
+
+    #Gather Info from UI
+    createCtroller = mc.checkBox(createCtrlCB, q = True, v = True)
+    controllerType = mc.radioCollection("ControllerSelectionID", q = True, sl = True)
+    NameBase = mc.textField("ControllerTextFieldID", q = True, tx = True)
+    specifyBaseShape = mc.checkBox(SpecifyBaseShapeCB, q = True, v = True)
+    BaseShapeFiledText = mc.textField("BasicShapeTextFieldID", q = True, tx = True)
+    
+    #find targetShape: 
+    sel = mc.ls(sl = True)[0]
+    ShapeNodeList = mc.listRelatives(sel, s = True)
+    BaseShape = ""
+    TargetShape = ""
+    for item in ShapeNodeList:
+        if mc.getAttr(item + ".intermediateObject"):
+            continue
+        else:
+            TargetShape = item
+
+    #find corresponding division planes
+    divisionPlaneList = mc.ls(TargetShape + "_DivisionPlane_*", tr = True)
+    if not len(divisionPlaneList):
+        mc.error("no divisiton plane exist")
+        return
+    
+    #Find BaseShape:
+    BaseShape = mc.getAttr(TargetShape + "_DivisionPlane_1.baseShape")
+    
+    #find number of divistions specified:
+    NumberOfDivisions = len(divisionPlaneList)
+
+    #get base and target position and their vertex List:
+    BasePosition = getTranslateNodePostion(BaseShape)
+    TargetPosition = getTranslateNodePostion(TargetShape)
+    BaseVertList = GetVertexLocations(BaseShape)
+    TargetVertList = GetVertexLocations(TargetShape)
+    
+    #get Bounding box
+    boundingBoxInfo = GetBoundingBox(BaseVertList, TargetVertList, BasePosition, TargetPosition)
+    boundingBox = boundingBoxInfo[0]
+    bIsBoundingBoxValid = boundingBoxInfo[1]
+
+    print "base shape is: " + BaseShape
+    print "Target Shape is: " + TargetShape
+    print "Division Planes are:", divisionPlaneList 
+    print "Number of Divisiion is:", str(NumberOfDivisions)
+    
+    newShapeList = []
+    lastShape = TargetShape
+    for currentDiv in range(0, NumberOfDivisions):
+        blendedVerts = CalculateBlend(BaseVertList,TargetVertList, BasePosition, TargetPosition, boundingBox, NumberOfDivisions, currentDiv,divisionPlaneList)
+        newShapeList.append(newBlend(blendedVerts, BaseShape, TargetShape, NumberOfDivisions, currentDiv, lastShape))
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+def newBlend(blendedVerts, BaseShape, TargetShape, NumberOfDivisions, currentDiv, lastShape):
+    #duplicate and rename:
+    newShape = TargetShape.replace("Shape", "") + "_" + str(currentDiv + 1)
+    mc.duplicate(BaseShape, n = newShape)
+        
+    #move vertex:
+    for i in range(0, len(blendedVerts)):
+        #determine geo Type:
+        if mc.objectType(BaseShape,i = "nurbsSurface"):
+            print "it is nurbs, let's deal with it latter"
+        if mc.objectType(BaseShape,i = "mesh"):   
+            vert = newShape + ".vtx[" + str(i) + "]"
+            vertPosition = blendedVerts[i]
+            mc.xform(vert, ws = True, t = (vertPosition.x, vertPosition.y, vertPosition.z))
+    
+    
+    
+# get a list of vetex locations of the blendshape the division plane divisionPlaneList[currentDiv] should generate
+def CalculateBlend(BaseVertList,TargetVertList, BasePosition, TargetPosition, boundingBox, NumberOfDivisions, currentDiv,divisionPlaneList):
+    blendedVerts = []
+    
+    #seperate bounding box infomation in variables
+    xMin = boundingBox[0]
+    xMax = boundingBox[1]
+    yMin = boundingBox[2]
+    yMax = boundingBox[3]
+    zMin = boundingBox[4]
+    zMax = boundingBox[5]
+    
+    #get target and base traslation offset
+    offset = TargetPosition - BasePosition
+    
+    #get current division plane position:
+    PlanePosition = getPos(divisionPlaneList[currentDiv])
+    
+    #find plane shape coverage extremes:
+    planeXMid = PlanePosition.x
+    planeXMin = 0
+    planeXMax = 0
+    if currentDiv == 0:
+        planeXMin = PlanePosition.x
+    else:
+        PrevisouPlanePosition = getPos(divisionPlaneList[currentDiv - 1])
+        planeXMin = PrevisouPlanePosition.x
+    if currentDiv == NumberOfDivisions - 1:
+        planeXMax = PlanePosition.x
+    else:
+        NextPlanePosition = getPos(divisionPlaneList[currentDiv + 1])
+        planeXMax = NextPlanePosition.x
+
+    planeXMid -= offset.x
+    planeXMin -= offset.x
+    planeXMax -= offset.x
+
+    for i in range(0, len(BaseVertList)):
+        #adjustedVert is the position of the current vertex that is different between shapes shifted to base shape space
+        adjustedVert = TargetVertList[i] - offset
+        CurrentVertTranslateX = adjustedVert.x
+        #figure out the max reaches the blend shape this division plane generate
+        xMinV = planeXMin
+        xMidV = planeXMid
+        xMaxV = planeXMax
+        
+        #percentage is the distance percentage form the position of the current division plane to the edge of the current division plane coverage
+        #if the vertex is between the min and mid range:
+        if (CurrentVertTranslateX > xMinV and CurrentVertTranslateX < xMidV):
+            percentage = smoothStep(xMinV, xMidV, CurrentVertTranslateX)
+            percentage = 1.0 - percentage
+        #if the vertex is between the mid and max range:
+        elif (CurrentVertTranslateX > xMidV and CurrentVertTranslateX < xMaxV):
+            percentage = smoothStep(xMidV, xMaxV, CurrentVertTranslateX)
+        #if the vertex is right on the mid:
+        elif (CurrentVertTranslateX == xMidV):
+            percentage = 0.0
+        #if the vertex is out of the min max range, it should have 0 percentage
+        else:
+            percentage = 1.0
+
+        # calculate the current vertex postion of the generated blendshape by blending the base vertex position and the target vertex position by percentage
+        blendedVerts.append((BaseVertList[i] * percentage) + (adjustedVert * (1-percentage)))
+    return blendedVerts
+
+    
 def CreatePlaneBtnCmd():
     #create paramaters
     #get base shape
@@ -134,10 +297,10 @@ def CreatePlaneBtnCmd():
     
     print "base shape is: " + BaseShape
     print "Target Shape is: " + TargetShape
-    if specifyBaseShape:
+    if specifyBaseShape and BaseShape == "":
         BaseShape = BaseShapeFiledText
     if BaseShape == "":
-        print mc.error("Cannot Find Baseshape, please specify BaseShape Mannually? if the model has intermidiate shape, uncheck specify BaseShape")
+        print mc.error("Cannot Find Baseshape, please specify BaseShape Mannually")
     
     #gether per vertex translation and object translation
     baseVertexLocations= GetVertexLocations(BaseShape)
@@ -158,11 +321,14 @@ def CreatePlaneBtnCmd():
     
     #create divistion Planes:
     MakeDivistionPlan(boundingBox, baseTranslation, targetTranslation, TargetShape, BaseShape, NumberOfDivision)
+    print "Divistion Planes Created Succesfully!"
+    mc.select(sel, r=True)
     
 #get the world space location of the translatation node of the given shape        
 def getTranslateNodePostion(shape):
     translateNode = mc.listRelatives(shape,p = True)[0]
-    #MVector is a vector 3D
+    return getPos(translateNode)
+def getPos(translateNode):
     location = mc.xform(translateNode, q = True, ws = True, t= True)
     locationVect = om.MVector(location[0], location[1], location[2])
     return locationVect
@@ -306,7 +472,7 @@ def MakeDivistionPlan(boundingBox, basePosition, targetPosition, targetShape, ba
     #Center poivots
     mc.xform(planGrpName,cp = True)
     #parent to targetShape
-    mc.parent(planGrpName, targetShape)
+    #mc.parent(planGrpName, targetShape)
     return Planes
     
     
