@@ -234,6 +234,7 @@ mc.showWindow(windowID)
 def changeColorOverride(obj, colorCode):
     shapes = mc.listRelatives(obj, s = True)
     for item in shapes:
+        mc.setAttr(item + ".overrideEnabled", 1)
         mc.setAttr(item +".overrideColor", colorCode)   
         
 def changeColorBtnCmd():
