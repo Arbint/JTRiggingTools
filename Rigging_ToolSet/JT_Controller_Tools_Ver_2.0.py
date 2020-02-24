@@ -1227,8 +1227,8 @@ def createFolicle(SurfaceToCreateOn, uValue, vValue, index, follicleNameBase = "
             if not (mc.getAttr(item + ".intermediateObject")):
                 DeformationShape = item
         mc.connectAttr(DeformationShape + ".outMesh", newFolicleShape + ".inputMesh")
-        
-    mc.connectAttr(SurfaceToCreateOn + "Shape.worldMatrix[0]", newFolicleShape + ".inputWorldMatrix")
+    SurfaceShape = mc.listRelatives(SurfaceToCreateOn, s=True)[0]    
+    mc.connectAttr(SurfaceShape + ".worldMatrix[0]", newFolicleShape + ".inputWorldMatrix")
     mc.connectAttr(newFolicle + ".outRotate", newFolicle + ".rotate" )
     mc.connectAttr(newFolicle + ".outTranslate", newFolicle + ".translate" )
     
